@@ -157,109 +157,9 @@ body{background:var(--bg);color:var(--tx);font-family:'DM Mono',monospace;font-s
 .sp{display:inline-block;width:13px;height:13px;border:2px solid rgba(110,231,183,.25);border-top-color:var(--ac);border-radius:50%;animation:sp .7s linear infinite;vertical-align:middle}
 `;
 
-export default function App() {
-  const [cfg, setCfg]   = useState(() => { try { return JSON.parse(localStorage.getItem(CONFIG_KEY)); } catch { return null; } });
-  const [data, setData] = useState({ events: [] });
-  const [sync, setSync] = useState({ status: "idle", msg: "" });
-  const [view, setView] = useState("dash");
-  const [activeId, setActiveId] = useState(null);
-  const [evForm, setEvForm]     = useState({ name: "", date: "", budget: "" });
-  const [cfgForm, setCfgForm]   = useState({ clientEmail: "", privateKey: "", sheetId: "" });
-  const [newItem, setNewItem]   = useState({ category: "", description: "", amount: "" });
-  const [addType, setAddType]   = useState(null);
-  const [saving, setSaving]     = useState(false);
-
-  useEffect(() => { if (cfg) doLoad(cfg); }, []);
-
-  const doLoad = async (c) => {
-    setSync({ status: "loading", msg: "Sincronizando..." });
-    try {
-      const token = await getAccessToken(c);
-      const d = await sheetsGet(c, token);
-      setData(d);
-      setSync({ status: "ok", msg: "Sincronizado ✓" });
-    } catch (e) { setSync({ status: "error", msg: e.message }); }
-  };
-
-  const persist = async (nd) => {
-    setData(nd);
-    if (!cfg) return;
-    setSync({ status: "loading", msg: "Guardando..." });
-    try {
-      const token = await getAccessToken(cfg);
-      await sheetsPut(cfg, token, nd);
-      setSync({ status: "ok", msg: "Guardado ✓" });
-    } catch { setSync({ status: "error", msg: "Error al guardar" }); }
-  };
-
-  const saveConfig = async () => {
-    if (!cfgForm.clientEmail || !cfgForm.privateKey || !cfgForm.sheetId) return;
-    setSaving(true);
-    const c = { clientEmail: cfgForm.clientEmail.trim(), privateKey: cfgForm.privateKey.trim().replace(/\\n/g, "\n"), sheetId: cfgForm.sheetId.trim() };
-    try {
-      const token = await getAccessToken(c);
-      const d = await sheetsGet(c, token);
-      localStorage.setItem(CONFIG_KEY, JSON.stringify(c));
-      setCfg(c); setData(d);
-      setSync({ status: "ok", msg: "Conectado ✓" });
-      setView("dash");
-    } catch (e) { alert("No se pudo conectar:\n\n" + e.message); }
-    setSaving(false);
-  };
-
-  const disconnect = () => {
-    if (!confirm("¿Desconectar Google Sheets?")) return;
-    localStorage.removeItem(CONFIG_KEY);
-    setCfg(null); setData({ events: [] });
-    setSync({ status: "idle", msg: "" });
-  };
-
-  const createEvent = () => {
-    if (!evForm.name.trim()) return;
-    const ev = { id: generateId(), name: evForm.name.trim(), date: evForm.date, budget: parseFloat(evForm.budget)||0, createdAt: new Date().toISOString(), items: [] };
-    persist({ ...data, events: [...data.events, ev] });
-    setEvForm({ name: "", date: "", budget: "" });
-    setView("dash");
-  };
-
-  const deleteEvent = (id) => {
-    if (!confirm("¿Eliminar este evento?")) return;
-    persist({ ...data, events: data.events.filter((e) => e.id !== id) });
-    if (activeId === id) { setActiveId(null); setView("dash"); }
-  };
-
-  const addItem = (type) => {
-    if (!newItem.category || !newItem.amount) return;
-    const item = { id: generateId(), type, category: newItem.category, description: newItem.description, amount: parseFloat(newItem.amount)||0, date: new Date().toISOString() };
-    persist({ ...data, events: data.events.map((e) => e.id === activeId ? { ...e, items: [...e.items, item] } : e) });
-    setNewItem({ category: "", description: "", amount: "" });
-    setAddType(null);
-  };
-
-  const delItem = (evId, itemId) => {
-    persist({ ...data, events: data.events.map((e) => e.id === evId ? { ...e, items: e.items.filter((i) => i.id !== itemId) } : e) });
-  };
-
-  const totals = (ev) => {
-    const inc = ev.items.filter((i) => i.type==="income").reduce((s,i)=>s+i.amount,0);
-    const exp = ev.items.filter((i) => i.type==="expense").reduce((s,i)=>s+i.amount,0);
-    return { inc, exp, margin: inc-exp, pct: inc>0?((inc-exp)/inc)*100:0 };
-  };
-
-  const global = data.events.reduce((a,e)=>{ const t=totals(e); return {inc:a.inc+t.inc,exp:a.exp+t.exp,margin:a.margin+t.margin}; },{inc:0,exp:0,margin:0});
-  const activeEv = data.events.find((e) => e.id === activeId);
-
-  // pill
-  const pillClass = {idle:"pill pill-off",loading:"pill pill-load",ok:"pill pill-ok",error:"pill pill-err"}[sync.status];
-  const pillTxt = {
-    idle: "Sin conectar",
-    loading: <><span className="sp"/> {sync.msg}</>,
-    ok: `☁ ${sync.msg}`,
-    error: `⚠ ${sync.msg}`
-  }[sync.status];
-
-  // ── SETTINGS ──────────────────────────────────────────────────────────────
-  const Settings = () => (
+// ── SETTINGS ────────────────────────────────────────────────────────────────
+function Settings({ cfg, cfgForm, setCfgForm, saving, saveConfig, disconnect, doLoad, setView }) {
+  return (
     <div className="fi">
       <div className="fc">
         <div className="ftit">⚙️ Conectar Google Sheets</div>
@@ -276,19 +176,22 @@ export default function App() {
           </>
         ) : (
           <>
-            <div className="f"><label>Client Email</label><input placeholder="eventos-app@proyecto.iam.gserviceaccount.com" value={cfgForm.clientEmail} onChange={(e)=>setCfgForm({...cfgForm,clientEmail:e.target.value})}/></div>
+            <div className="f">
+              <label>Client Email</label>
+              <input placeholder="eventos-app@proyecto.iam.gserviceaccount.com" value={cfgForm.clientEmail} onChange={(e)=>setCfgForm(p=>({...p,clientEmail:e.target.value}))}/>
+            </div>
             <div className="f">
               <label>Private Key</label>
-              <textarea placeholder={"-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----"} value={cfgForm.privateKey} onChange={(e)=>setCfgForm({...cfgForm,privateKey:e.target.value})}/>
+              <textarea placeholder={"-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----"} value={cfgForm.privateKey} onChange={(e)=>setCfgForm(p=>({...p,privateKey:e.target.value}))}/>
               <div className="fhint">Pegá la clave completa incluyendo los encabezados BEGIN y END.</div>
             </div>
             <div className="f">
               <label>ID de la Planilla</label>
-              <input placeholder="1uP2jT4N478D78Ph..." value={cfgForm.sheetId} onChange={(e)=>setCfgForm({...cfgForm,sheetId:e.target.value})}/>
+              <input placeholder="1uP2jT4N478D78Ph..." value={cfgForm.sheetId} onChange={(e)=>setCfgForm(p=>({...p,sheetId:e.target.value}))}/>
               <div className="fhint">Parte de la URL entre <code>/d/</code> y <code>/edit</code></div>
             </div>
             <button className="btn btn-p" style={{width:"100%"}} onClick={saveConfig} disabled={saving}>
-              {saving?<><span className="sp"/> Conectando...</>:"Conectar y verificar"}
+              {saving ? <><span className="sp"/> Conectando...</> : "Conectar y verificar"}
             </button>
           </>
         )}
@@ -296,9 +199,11 @@ export default function App() {
       </div>
     </div>
   );
+}
 
-  // ── DASHBOARD ─────────────────────────────────────────────────────────────
-  const Dashboard = () => (
+// ── DASHBOARD ────────────────────────────────────────────────────────────────
+function Dashboard({ data, global, totals, setActiveId, setAddType, setView, deleteEvent }) {
+  return (
     <div className="fi">
       <div className="ptitle">Control de <span style={{color:"var(--ac)"}}>Eventos</span></div>
       <div className="psub">{data.events.length} evento{data.events.length!==1?"s":""} registrado{data.events.length!==1?"s":""}</div>
@@ -337,125 +242,246 @@ export default function App() {
       </div>
     </div>
   );
+}
 
-  // ── NEW EVENT ─────────────────────────────────────────────────────────────
-  const NewEvent = () => (
+// ── NEW EVENT ────────────────────────────────────────────────────────────────
+function NewEvent({ evForm, setEvForm, createEvent, setView }) {
+  return (
     <div className="fi">
       <div className="fc">
         <div className="ftit">Nuevo Evento</div>
-        <div className="f"><label>Nombre *</label><input placeholder="ej: Gala Empresarial 2025" value={evForm.name} onChange={(e)=>setEvForm({...evForm,name:e.target.value})}/></div>
-        <div className="f"><label>Fecha</label><input type="date" value={evForm.date} onChange={(e)=>setEvForm({...evForm,date:e.target.value})}/></div>
-        <div className="f"><label>Presupuesto Objetivo ($)</label><input type="number" placeholder="ej: 500000" value={evForm.budget} onChange={(e)=>setEvForm({...evForm,budget:e.target.value})}/></div>
+        <div className="f">
+          <label>Nombre *</label>
+          <input placeholder="ej: Gala Empresarial 2025" value={evForm.name} onChange={(e)=>setEvForm(p=>({...p,name:e.target.value}))}/>
+        </div>
+        <div className="f">
+          <label>Fecha</label>
+          <input type="date" value={evForm.date} onChange={(e)=>setEvForm(p=>({...p,date:e.target.value}))}/>
+        </div>
+        <div className="f">
+          <label>Presupuesto Objetivo ($)</label>
+          <input type="number" placeholder="ej: 500000" value={evForm.budget} onChange={(e)=>setEvForm(p=>({...p,budget:e.target.value}))}/>
+        </div>
         <button className="btn btn-p" style={{width:"100%"}} onClick={createEvent}>Crear Evento</button>
         <button className="btn btn-s" style={{width:"100%",marginTop:10}} onClick={()=>setView("dash")}>Cancelar</button>
       </div>
     </div>
   );
+}
 
-  // ── EVENT DETAIL ──────────────────────────────────────────────────────────
-  const EventDetail = () => {
-    if (!activeEv) return null;
-    const t=totals(activeEv);
-    const incItems=activeEv.items.filter((i)=>i.type==="income");
-    const expItems=activeEv.items.filter((i)=>i.type==="expense");
-    const expByCat=EXPENSE_CATEGORIES.map((c)=>({...c,total:expItems.filter((i)=>i.category===c.id).reduce((s,i)=>s+i.amount,0)})).filter((c)=>c.total>0);
-    const maxCat=Math.max(...expByCat.map((c)=>c.total),1);
-
-    const Panel=({type,items,cats,color,title})=>(
-      <div className="panel">
-        <div className="ph">
-          <div className="ptl" style={{color}}>{type==="income"?"📈":"📉"} {title}</div>
-          <div className="ptt" style={{color}}>{fmt(items.reduce((s,i)=>s+i.amount,0))}</div>
-        </div>
-        <div className="il">
-          {items.length===0&&<div className="es">Sin registros aún</div>}
-          {items.map((item)=>{
-            const cat=cats.find((c)=>c.id===item.category);
-            return (
-              <div className="ir" key={item.id}>
-                <div className="ii">
-                  <span className="iico">{cat?.icon||"💡"}</span>
-                  <div><div className="inm">{cat?.label||item.category}</div>{item.description&&<div className="idsc">{item.description}</div>}</div>
-                </div>
-                <div className="iamt" style={{color}}>{fmt(item.amount)}</div>
-                <button className="btn-x" onClick={()=>delItem(activeEv.id,item.id)}>×</button>
-              </div>
-            );
-          })}
-          <div style={{padding:"5px"}}>
-            {addType===type?(
-              <div className="af">
-                <div className="ar">
-                  <div className="f"><label>Categoría</label>
-                    <select value={newItem.category} onChange={(e)=>setNewItem({...newItem,category:e.target.value})}>
-                      <option value="">Seleccionar...</option>
-                      {cats.map((c)=><option key={c.id} value={c.id}>{c.icon} {c.label}</option>)}
-                    </select>
-                  </div>
-                  <div className="f"><label>Monto ($)</label>
-                    <input type="number" placeholder="0" value={newItem.amount} onChange={(e)=>setNewItem({...newItem,amount:e.target.value})}/>
-                  </div>
-                </div>
-                <div className="f" style={{marginTop:7}}><label>Descripción (opcional)</label>
-                  <input placeholder="Detalle..." value={newItem.description} onChange={(e)=>setNewItem({...newItem,description:e.target.value})}/>
-                </div>
-                <div style={{display:"flex",gap:7,marginTop:8}}>
-                  <button className="btn btn-p" style={{flex:1,padding:"9px"}} onClick={()=>addItem(type)}>Agregar</button>
-                  <button className="btn btn-s" onClick={()=>setAddType(null)}>Cancelar</button>
-                </div>
-              </div>
-            ):(
-              <button className="btn-add" style={{width:"100%"}} onClick={()=>{setNewItem({category:"",description:"",amount:""});setAddType(type);}}>
-                + Agregar {type==="income"?"Ingreso":"Gasto"}
-              </button>
-            )}
-          </div>
-        </div>
+// ── ITEM PANEL ───────────────────────────────────────────────────────────────
+function ItemPanel({ type, items, cats, color, title, addType, setAddType, newItem, setNewItem, onAdd, onDelete }) {
+  return (
+    <div className="panel">
+      <div className="ph">
+        <div className="ptl" style={{color}}>{type==="income"?"📈":"📉"} {title}</div>
+        <div className="ptt" style={{color}}>{fmt(items.reduce((s,i)=>s+i.amount,0))}</div>
       </div>
-    );
-
-    return (
-      <div className="fi">
-        <div className="eh">
-          <div>
-            <div className="ptitle">{activeEv.name}</div>
-            <div className="psub">
-              {activeEv.date?new Date(activeEv.date+"T12:00:00").toLocaleDateString("es-AR",{weekday:"long",day:"2-digit",month:"long",year:"numeric"}):"Sin fecha"}
-              {activeEv.budget>0&&` · Presupuesto: ${fmt(activeEv.budget)}`}
-            </div>
-          </div>
-          <button className="btn btn-s" onClick={()=>setView("dash")}>← Volver</button>
-        </div>
-        <div className="sum">
-          <div className="sr"><span className="slb">Total Ingresos</span><span style={{color:"var(--gr)",fontFamily:"Syne",fontWeight:600}}>{fmt(t.inc)}</span></div>
-          <div className="sr"><span className="slb">Total Gastos</span><span style={{color:"var(--ac2)",fontFamily:"Syne",fontWeight:600}}>{fmt(t.exp)}</span></div>
-          <div className="sr">
-            <span>Margen Neto</span>
-            <span style={{fontFamily:"Syne",fontWeight:700,fontSize:17,color:t.margin>=0?"var(--gr)":"var(--re)"}}>
-              {t.margin>=0?"▲ ":"▼ "}{fmt(Math.abs(t.margin))}
-              {t.inc>0&&<span style={{fontSize:12,fontWeight:400,marginLeft:8}}>({t.pct.toFixed(1)}%)</span>}
-            </span>
-          </div>
-          {expByCat.length>0&&(
-            <>
-              <div className="br-tit">Distribución de Gastos</div>
-              {expByCat.map((c)=>(
-                <div className="cr" key={c.id}>
-                  <div className="clb"><span>{c.icon}</span><span>{c.label}</span></div>
-                  <div className="cbg"><div className="cfi" style={{width:`${(c.total/maxCat)*100}%`,background:c.color}}/></div>
-                  <div className="cam">{fmt(c.total)}</div>
+      <div className="il">
+        {items.length===0&&<div className="es">Sin registros aún</div>}
+        {items.map((item)=>{
+          const cat=cats.find((c)=>c.id===item.category);
+          return (
+            <div className="ir" key={item.id}>
+              <div className="ii">
+                <span className="iico">{cat?.icon||"💡"}</span>
+                <div>
+                  <div className="inm">{cat?.label||item.category}</div>
+                  {item.description&&<div className="idsc">{item.description}</div>}
                 </div>
-              ))}
-            </>
+              </div>
+              <div className="iamt" style={{color}}>{fmt(item.amount)}</div>
+              <button className="btn-x" onClick={()=>onDelete(item.id)}>×</button>
+            </div>
+          );
+        })}
+        <div style={{padding:"5px"}}>
+          {addType===type ? (
+            <div className="af">
+              <div className="ar">
+                <div className="f">
+                  <label>Categoría</label>
+                  <select value={newItem.category} onChange={(e)=>setNewItem(p=>({...p,category:e.target.value}))}>
+                    <option value="">Seleccionar...</option>
+                    {cats.map((c)=><option key={c.id} value={c.id}>{c.icon} {c.label}</option>)}
+                  </select>
+                </div>
+                <div className="f">
+                  <label>Monto ($)</label>
+                  <input type="number" placeholder="0" value={newItem.amount} onChange={(e)=>setNewItem(p=>({...p,amount:e.target.value}))}/>
+                </div>
+              </div>
+              <div className="f" style={{marginTop:7}}>
+                <label>Descripción (opcional)</label>
+                <input placeholder="Detalle..." value={newItem.description} onChange={(e)=>setNewItem(p=>({...p,description:e.target.value}))}/>
+              </div>
+              <div style={{display:"flex",gap:7,marginTop:8}}>
+                <button className="btn btn-p" style={{flex:1,padding:"9px"}} onClick={()=>onAdd(type)}>Agregar</button>
+                <button className="btn btn-s" onClick={()=>setAddType(null)}>Cancelar</button>
+              </div>
+            </div>
+          ) : (
+            <button className="btn-add" style={{width:"100%"}} onClick={()=>{setNewItem({category:"",description:"",amount:""});setAddType(type);}}>
+              + Agregar {type==="income"?"Ingreso":"Gasto"}
+            </button>
           )}
         </div>
-        <div className="tc">
-          <Panel type="income"  items={incItems} cats={INCOME_CATEGORIES}  color="var(--gr)"  title="Ingresos"/>
-          <Panel type="expense" items={expItems} cats={EXPENSE_CATEGORIES} color="var(--ac2)" title="Gastos"/>
-        </div>
       </div>
-    );
+    </div>
+  );
+}
+
+// ── EVENT DETAIL ─────────────────────────────────────────────────────────────
+function EventDetail({ activeEv, totals, addType, setAddType, newItem, setNewItem, onAdd, onDelete, setView }) {
+  if (!activeEv) return null;
+  const t=totals(activeEv);
+  const incItems=activeEv.items.filter((i)=>i.type==="income");
+  const expItems=activeEv.items.filter((i)=>i.type==="expense");
+  const expByCat=EXPENSE_CATEGORIES.map((c)=>({...c,total:expItems.filter((i)=>i.category===c.id).reduce((s,i)=>s+i.amount,0)})).filter((c)=>c.total>0);
+  const maxCat=Math.max(...expByCat.map((c)=>c.total),1);
+
+  return (
+    <div className="fi">
+      <div className="eh">
+        <div>
+          <div className="ptitle">{activeEv.name}</div>
+          <div className="psub">
+            {activeEv.date?new Date(activeEv.date+"T12:00:00").toLocaleDateString("es-AR",{weekday:"long",day:"2-digit",month:"long",year:"numeric"}):"Sin fecha"}
+            {activeEv.budget>0&&` · Presupuesto: ${fmt(activeEv.budget)}`}
+          </div>
+        </div>
+        <button className="btn btn-s" onClick={()=>setView("dash")}>← Volver</button>
+      </div>
+      <div className="sum">
+        <div className="sr"><span className="slb">Total Ingresos</span><span style={{color:"var(--gr)",fontFamily:"Syne",fontWeight:600}}>{fmt(t.inc)}</span></div>
+        <div className="sr"><span className="slb">Total Gastos</span><span style={{color:"var(--ac2)",fontFamily:"Syne",fontWeight:600}}>{fmt(t.exp)}</span></div>
+        <div className="sr">
+          <span>Margen Neto</span>
+          <span style={{fontFamily:"Syne",fontWeight:700,fontSize:17,color:t.margin>=0?"var(--gr)":"var(--re)"}}>
+            {t.margin>=0?"▲ ":"▼ "}{fmt(Math.abs(t.margin))}
+            {t.inc>0&&<span style={{fontSize:12,fontWeight:400,marginLeft:8}}>({t.pct.toFixed(1)}%)</span>}
+          </span>
+        </div>
+        {expByCat.length>0&&(
+          <>
+            <div className="br-tit">Distribución de Gastos</div>
+            {expByCat.map((c)=>(
+              <div className="cr" key={c.id}>
+                <div className="clb"><span>{c.icon}</span><span>{c.label}</span></div>
+                <div className="cbg"><div className="cfi" style={{width:`${(c.total/maxCat)*100}%`,background:c.color}}/></div>
+                <div className="cam">{fmt(c.total)}</div>
+              </div>
+            ))}
+          </>
+        )}
+      </div>
+      <div className="tc">
+        <ItemPanel type="income"  items={incItems} cats={INCOME_CATEGORIES}  color="var(--gr)"  title="Ingresos"
+          addType={addType} setAddType={setAddType} newItem={newItem} setNewItem={setNewItem}
+          onAdd={onAdd} onDelete={(id)=>onDelete(activeEv.id,id)}/>
+        <ItemPanel type="expense" items={expItems} cats={EXPENSE_CATEGORIES} color="var(--ac2)" title="Gastos"
+          addType={addType} setAddType={setAddType} newItem={newItem} setNewItem={setNewItem}
+          onAdd={onAdd} onDelete={(id)=>onDelete(activeEv.id,id)}/>
+      </div>
+    </div>
+  );
+}
+
+// ── APP ──────────────────────────────────────────────────────────────────────
+export default function App() {
+  const [cfg, setCfg]     = useState(() => { try { return JSON.parse(localStorage.getItem(CONFIG_KEY)); } catch { return null; } });
+  const [data, setData]   = useState({ events: [] });
+  const [sync, setSync]   = useState({ status: "idle", msg: "" });
+  const [view, setView]   = useState("dash");
+  const [activeId, setActiveId] = useState(null);
+  const [evForm, setEvForm]     = useState({ name: "", date: "", budget: "" });
+  const [cfgForm, setCfgForm]   = useState({ clientEmail: "", privateKey: "", sheetId: "" });
+  const [newItem, setNewItem]   = useState({ category: "", description: "", amount: "" });
+  const [addType, setAddType]   = useState(null);
+  const [saving, setSaving]     = useState(false);
+
+  useEffect(() => { if (cfg) doLoad(cfg); }, []);
+
+  const doLoad = useCallback(async (c) => {
+    setSync({ status: "loading", msg: "Sincronizando..." });
+    try {
+      const token = await getAccessToken(c);
+      const d = await sheetsGet(c, token);
+      setData(d);
+      setSync({ status: "ok", msg: "Sincronizado ✓" });
+    } catch (e) { setSync({ status: "error", msg: e.message }); }
+  }, []);
+
+  const persist = useCallback(async (nd) => {
+    setData(nd);
+    if (!cfg) return;
+    setSync({ status: "loading", msg: "Guardando..." });
+    try {
+      const token = await getAccessToken(cfg);
+      await sheetsPut(cfg, token, nd);
+      setSync({ status: "ok", msg: "Guardado ✓" });
+    } catch { setSync({ status: "error", msg: "Error al guardar" }); }
+  }, [cfg]);
+
+  const saveConfig = async () => {
+    if (!cfgForm.clientEmail || !cfgForm.privateKey || !cfgForm.sheetId) return;
+    setSaving(true);
+    const c = { clientEmail: cfgForm.clientEmail.trim(), privateKey: cfgForm.privateKey.trim().replace(/\\n/g,"\n"), sheetId: cfgForm.sheetId.trim() };
+    try {
+      const token = await getAccessToken(c);
+      const d = await sheetsGet(c, token);
+      localStorage.setItem(CONFIG_KEY, JSON.stringify(c));
+      setCfg(c); setData(d);
+      setSync({ status: "ok", msg: "Conectado ✓" });
+      setView("dash");
+    } catch (e) { alert("No se pudo conectar:\n\n" + e.message); }
+    setSaving(false);
   };
+
+  const disconnect = () => {
+    if (!confirm("¿Desconectar Google Sheets?")) return;
+    localStorage.removeItem(CONFIG_KEY);
+    setCfg(null); setData({ events: [] });
+    setSync({ status: "idle", msg: "" });
+  };
+
+  const totals = (ev) => {
+    const inc = ev.items.filter((i)=>i.type==="income").reduce((s,i)=>s+i.amount,0);
+    const exp = ev.items.filter((i)=>i.type==="expense").reduce((s,i)=>s+i.amount,0);
+    return { inc, exp, margin: inc-exp, pct: inc>0?((inc-exp)/inc)*100:0 };
+  };
+
+  const global = data.events.reduce((a,e)=>{ const t=totals(e); return {inc:a.inc+t.inc,exp:a.exp+t.exp,margin:a.margin+t.margin}; },{inc:0,exp:0,margin:0});
+  const activeEv = data.events.find((e)=>e.id===activeId);
+
+  const createEvent = () => {
+    if (!evForm.name.trim()) return;
+    const ev = { id:generateId(), name:evForm.name.trim(), date:evForm.date, budget:parseFloat(evForm.budget)||0, createdAt:new Date().toISOString(), items:[] };
+    persist({ ...data, events:[...data.events,ev] });
+    setEvForm({ name:"", date:"", budget:"" });
+    setView("dash");
+  };
+
+  const deleteEvent = (id) => {
+    if (!confirm("¿Eliminar este evento?")) return;
+    persist({ ...data, events:data.events.filter((e)=>e.id!==id) });
+    if (activeId===id) { setActiveId(null); setView("dash"); }
+  };
+
+  const addItem = (type) => {
+    if (!newItem.category || !newItem.amount) return;
+    const item = { id:generateId(), type, category:newItem.category, description:newItem.description, amount:parseFloat(newItem.amount)||0, date:new Date().toISOString() };
+    persist({ ...data, events:data.events.map((e)=>e.id===activeId?{...e,items:[...e.items,item]}:e) });
+    setNewItem({ category:"", description:"", amount:"" });
+    setAddType(null);
+  };
+
+  const delItem = (evId, itemId) => {
+    persist({ ...data, events:data.events.map((e)=>e.id===evId?{...e,items:e.items.filter((i)=>i.id!==itemId)}:e) });
+  };
+
+  const pillClass = {idle:"pill pill-off",loading:"pill pill-load",ok:"pill pill-ok",error:"pill pill-err"}[sync.status];
+  const pillTxt = { idle:"Sin conectar", loading:<><span className="sp"/> {sync.msg}</>, ok:`☁ ${sync.msg}`, error:`⚠ ${sync.msg}` }[sync.status];
 
   return (
     <div className="app">
@@ -466,14 +492,14 @@ export default function App() {
           <span className={pillClass}>{pillTxt}</span>
           <button className="btn-nav" onClick={()=>setView("dash")}>Dashboard</button>
           <button className="btn-nav" onClick={()=>setView("new")}>+ Evento</button>
-          <button className="btn-gear" onClick={()=>setView("settings")} title="Configuración">⚙️</button>
+          <button className="btn-gear" onClick={()=>setView("settings")}>⚙️</button>
         </div>
       </div>
       <div className="main">
-        {view==="dash"    &&<Dashboard/>}
-        {view==="new"     &&<NewEvent/>}
-        {view==="event"   &&<EventDetail/>}
-        {view==="settings"&&<Settings/>}
+        {view==="dash"     && <Dashboard data={data} global={global} totals={totals} setActiveId={setActiveId} setAddType={setAddType} setView={setView} deleteEvent={deleteEvent}/>}
+        {view==="new"      && <NewEvent evForm={evForm} setEvForm={setEvForm} createEvent={createEvent} setView={setView}/>}
+        {view==="event"    && <EventDetail activeEv={activeEv} totals={totals} addType={addType} setAddType={setAddType} newItem={newItem} setNewItem={setNewItem} onAdd={addItem} onDelete={delItem} setView={setView}/>}
+        {view==="settings" && <Settings cfg={cfg} cfgForm={cfgForm} setCfgForm={setCfgForm} saving={saving} saveConfig={saveConfig} disconnect={disconnect} doLoad={doLoad} setView={setView}/>}
       </div>
     </div>
   );

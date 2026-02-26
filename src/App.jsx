@@ -195,7 +195,7 @@ export default function App() {
   const saveConfig = async () => {
     if (!cfgForm.clientEmail || !cfgForm.privateKey || !cfgForm.sheetId) return;
     setSaving(true);
-    const c = { clientEmail: cfgForm.clientEmail.trim(), privateKey: cfgForm.privateKey.trim(), sheetId: cfgForm.sheetId.trim() };
+    const c = { clientEmail: cfgForm.clientEmail.trim(), privateKey: cfgForm.privateKey.trim().replace(/\\n/g, "\n"), sheetId: cfgForm.sheetId.trim() };
     try {
       const token = await getAccessToken(c);
       const d = await sheetsGet(c, token);

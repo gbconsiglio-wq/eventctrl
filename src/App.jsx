@@ -12,11 +12,8 @@ const EXPENSE_CATEGORIES = [
 ];
 
 const INCOME_CATEGORIES = [
-  { id: "tickets",  label: "Entradas / Tickets",    icon: "🎟️" },
-  { id: "sponsors", label: "Auspicios / Sponsors",  icon: "🤝" },
-  { id: "bar",      label: "Bar / Gastronomía",     icon: "🍸" },
-  { id: "services", label: "Servicios Adicionales", icon: "📸" },
-  { id: "other",    label: "Otros Ingresos",        icon: "💰" },
+  { id: "Pago",  label: "Pago",    icon: "🎟️" },
+
 ];
 
 const fmt = (n) =>
@@ -46,8 +43,88 @@ async function sheetsGet(cfg,token){
   return raw?JSON.parse(raw):{events:[]};
 }
 
-async function sheetsPut(cfg,token,appData){
-  await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${cfg.sheetId}/values/Sheet1!A1?valueInputOption=RAW`,{method:"PUT",headers:{Authorization:`Bearer ${token}`,"Content-Type":"application/json"},body:JSON.stringify({range:"Sheet1!A1",majorDimension:"ROWS",values:[[JSON.stringify(appData)]]})});
+async function sheetsGetMeta(cfg,token){
+  const r=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${cfg.sheetId}?fields=sheets.properties`,{headers:{Authorization:`Bearer ${token}`}});
+  const d=await r.json();
+  return d.sheets||[];
+}
+
+async function batchUpdate(cfg,token,requests){
+  await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${cfg.sheetId}:batchUpdate`,{
+    method:"POST",
+    headers:{Authorization:`Bearer ${token}`,"Content-Type":"application/json"},
+    body:JSON.stringify({requests})
+  });
+}
+
+async function clearAndWriteSheet(cfg,token,sheetName,values){
+  const enc=encodeURIComponent(sheetName);
+  await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${cfg.sheetId}/values/${enc}:clear`,{method:"POST",headers:{Authorization:`Bearer ${token}`}});
+  await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${cfg.sheetId}/values/${enc}?valueInputOption=RAW`,{
+    method:"PUT",
+    headers:{Authorization:`Bearer ${token}`,"Content-Type":"application/json"},
+    body:JSON.stringify({range:sheetName,majorDimension:"ROWS",values})
+  });
+}
+
+const ALL_CATS={
+  tickets:"Entradas / Tickets",sponsors:"Auspicios / Sponsors",bar:"Bar / Gastronomia",
+  services:"Servicios Adicionales",venue:"Venue / Salon",artistic:"Artistico / Artistas",
+  catering:"Catering / Gastronomia",marketing:"Marketing / Publicidad",staff:"Personal / Staff",
+  equipment:"Sonido / Luces",logistics:"Logistica / Transporte",other:"Otros"
+};
+
+async function syncAllSheets(cfg,token,appData){
+  // 1. save JSON for app
+  await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${cfg.sheetId}/values/Sheet1!A1?valueInputOption=RAW`,{
+    method:"PUT",headers:{Authorization:`Bearer ${token}`,"Content-Type":"application/json"},
+    body:JSON.stringify({range:"Sheet1!A1",majorDimension:"ROWS",values:[[JSON.stringify(appData)]]})
+  });
+  // 2. get existing sheet names
+  const meta=await sheetsGetMeta(cfg,token);
+  const existingNames=meta.map(s=>s.properties.title);
+  // 3. create missing sheets
+  const needed=["Resumen",...appData.events.map(e=>e.name.slice(0,80))];
+  const toCreate=needed.filter(n=>n!=="Sheet1"&&!existingNames.includes(n));
+  if(toCreate.length>0){
+    await batchUpdate(cfg,token,toCreate.map(title=>({addSheet:{properties:{title}}})));
+  }
+  // 4. update Resumen
+  const resRows=[
+    ["Evento","Fecha","Presupuesto","Ingresos","Gastos","Margen","% Rentabilidad"],
+    ...appData.events.map(ev=>{
+      const inc=ev.items.filter(i=>i.type==="income").reduce((s,i)=>s+i.amount,0);
+      const exp=ev.items.filter(i=>i.type==="expense").reduce((s,i)=>s+i.amount,0);
+      const margin=inc-exp;
+      const pct=inc>0?((margin/inc)*100).toFixed(1)+"%":"0%";
+      return [ev.name,ev.date||"",ev.budget||0,inc,exp,margin,pct];
+    })
+  ];
+  await clearAndWriteSheet(cfg,token,"Resumen",resRows);
+  // 5. update each event sheet
+  for(const ev of appData.events){
+    const sheetName=ev.name.slice(0,80);
+    const inc=ev.items.filter(i=>i.type==="income").reduce((s,i)=>s+i.amount,0);
+    const exp=ev.items.filter(i=>i.type==="expense").reduce((s,i)=>s+i.amount,0);
+    const rows=[
+      [ev.name],
+      ["Fecha:",ev.date||"Sin fecha"],
+      ["Presupuesto:",ev.budget||0],
+      [],
+      ["Tipo","Categoria","Descripcion","Monto"],
+      ...ev.items.map(item=>[
+        item.type==="income"?"Ingreso":"Gasto",
+        ALL_CATS[item.category]||item.category,
+        item.description||"",
+        item.amount
+      ]),
+      [],
+      ["","","Total Ingresos",inc],
+      ["","","Total Gastos",exp],
+      ["","","Margen Neto",inc-exp],
+    ];
+    await clearAndWriteSheet(cfg,token,sheetName,rows);
+  }
 }
 
 const CSS = `
@@ -418,7 +495,7 @@ export default function App() {
     setSync({ status: "loading", msg: "Guardando..." });
     try {
       const token = await getAccessToken(cfg);
-      await sheetsPut(cfg, token, nd);
+      await syncAllSheets(cfg, token, nd);
       setSync({ status: "ok", msg: "Guardado ✓" });
     } catch { setSync({ status: "error", msg: "Error al guardar" }); }
   }, [cfg]);
